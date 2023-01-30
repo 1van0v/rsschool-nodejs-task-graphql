@@ -59,6 +59,38 @@ const plugin: FastifyPluginAsyncJsonSchemaToTs = async (
     async function (request, reply): Promise<UserEntity | void> {
       try {
         const deleted = await fastify.db.users.delete(request.params.id);
+
+        const profile = await fastify.db.profiles.findOne({
+          key: 'userId',
+          equals: request.params.id,
+        });
+
+        if (profile) {
+          await fastify.db.profiles.delete(profile.id);
+        }
+
+        const posts = await fastify.db.posts.findMany({
+          key: 'userId',
+          equals: request.params.id,
+        });
+
+        const deletedPost = posts.map((i) => fastify.db.posts.delete(i.id));
+
+        const subscribers = await fastify.db.users.findMany({
+          inArray: request.params.id,
+          key: 'subscribedToUserIds',
+        });
+
+        const unsubscribed = subscribers.map((i) =>
+          fastify.db.users.change(i.id, {
+            subscribedToUserIds: i.subscribedToUserIds.filter(
+              (id) => id !== request.params.id
+            ),
+          })
+        );
+
+        await Promise.all([...unsubscribed, ...deletedPost]);
+
         deleted;
       } catch (e) {
         return reply.badRequest();
@@ -139,21 +171,6 @@ const plugin: FastifyPluginAsyncJsonSchemaToTs = async (
           request.params.id,
           request.body
         );
-
-        const subscribers = await fastify.db.users.findMany({
-          inArrayAnyOf: [request.params.id],
-          key: 'subscribedToUserIds',
-        });
-
-        const unsubscribed = subscribers.map((i) =>
-          fastify.db.users.change(i.id, {
-            subscribedToUserIds: i.subscribedToUserIds.filter(
-              (id) => id !== request.params.id
-            ),
-          })
-        );
-
-        await Promise.all(unsubscribed);
 
         return updated;
       } catch (e) {
